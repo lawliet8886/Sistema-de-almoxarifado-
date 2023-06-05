@@ -7,6 +7,10 @@ from PyQt5 import QtGui
 import openpyxl
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
+import unidecode
+import datetime
+import re
+from openpyxl.drawing.image import Image
 
 # Conexão com o banco de dados
 conn = sqlite3.connect('almoxarifado.db')
@@ -98,6 +102,7 @@ class EditDialog(QDialog):
         self.form_layout.addRow("Data de Registro:", self.register_date_layout)
 
         self.unit_value_input = QLineEdit()
+        self.unit_value_input.setText(str(produto[7]))
         self.form_layout.addRow("Valor Unitário:",  self.unit_value_input)
 
         self.register_day_label = QLabel("Dia:")
@@ -125,6 +130,7 @@ class EditDialog(QDialog):
         self.delete_button = QPushButton("Excluir")
         self.delete_button.clicked.connect(self.delete_product)
         self.button_layout.addWidget(self.delete_button)
+        self.total_value_label = QLabel()
 
         # Preencher campos de dia, mês e ano corretamente
         vencimento = produto[4].split("/")
@@ -161,6 +167,8 @@ class EditDialog(QDialog):
             try:
                 quantidade = int(quantidade)
                 min_quantidade = int(min_quantidade)
+                valor_unitario = float(valor_unitario)
+                valor_total = quantidade * valor_unitario 
                 vencimento = ""
                 if not dia_vencimento:
                     dia_vencimento = "01"
@@ -171,11 +179,13 @@ class EditDialog(QDialog):
                     dia_registro = "01"
                 data_registro += f"{dia_registro}/"
                 data_registro += f"{mes_registro}/{ano_registro}"
-                c.execute("UPDATE produtos SET nome=?, categoria=?, quantidade=?, quantidade_minima=?, vencimento=?, data_registro=? WHERE nome=?",
-                          (nome, categoria, quantidade, min_quantidade, vencimento, data_registro, self.produto[0]))
+                c.execute("UPDATE produtos SET nome=?, categoria=?, quantidade=?, quantidade_minima=?, vencimento=?, data_registro=?, valor_unitario=?, valor_total=? WHERE nome=?",
+                          (nome, categoria, quantidade, min_quantidade, vencimento, data_registro, valor_unitario, valor_total, self.produto[0]))
                 conn.commit()
                 QMessageBox.information(self, "Sucesso", "Alterações salvas com sucesso!")
+                self.main_window.load_products()
                 self.accept()
+
             except ValueError:
                 QMessageBox.warning(self, "Erro", "Quantidade inválida. Insira um valor numérico.")
         else:
@@ -190,7 +200,9 @@ class EditDialog(QDialog):
             conn.commit()
             QMessageBox.information(self, "Sucesso", "Item excluído com sucesso!")
             self.accept()
+            self.main_window.update_total_value()
             
+                                    
 class WithdrawalDialog(QDialog):
     def __init__(self, quantidade_atual, valor_unitario, produto, parent=None):
         super(WithdrawalDialog, self).__init__(parent)
@@ -231,19 +243,8 @@ class WithdrawalDialog(QDialog):
 
     def accept(self):
         quantidade_retirada = self.quantity_input.text()
-        responsavel = self.responsavel_input.text()
-        data = self.date_edit.date().toString("dd/MM/yyyy")
-        produto = self.produto
-        valor_unitario = self.valor_unitario
-        valor_total = int(quantidade_retirada) * valor_unitario
         if quantidade_retirada.isdigit() and int(quantidade_retirada) > 0:
-            try:
-                c.execute("INSERT INTO retiradas (produto, quantidade, valor_unitario, valor_total, data, responsavel) VALUES (?, ?, ?, ?, ?, ?)",
-                          (produto, quantidade_retirada, valor_unitario, valor_total, data, responsavel))
-                conn.commit()
-                super().accept()
-            except Exception as e:
-                print(f"Erro ao inserir retirada: {e}")
+            super().accept()
         else:
             QMessageBox.warning(self, "Erro", "A quantidade de retirada deve ser um valor inteiro maior que zero.")
 
@@ -287,21 +288,11 @@ class EntryDialog(QDialog):
 
     def accept(self):
         quantidade_entrada = self.quantity_input.text()
-        responsavel = self.responsavel_input.text()
-        data = self.date_edit.date().toString("dd/MM/yyyy")
-        produto = self.produto
-        valor_unitario = self.valor_unitario
-        valor_total = int(quantidade_entrada) * valor_unitario
         if quantidade_entrada.isdigit() and int(quantidade_entrada) > 0:
-            try:
-                c.execute("INSERT INTO entradas (produto, quantidade, valor_unitario, valor_total, data, responsavel) VALUES (?, ?, ?, ?, ?, ?)",
-                          (produto, quantidade_entrada, valor_unitario, valor_total, data, responsavel))
-                conn.commit()
-                super().accept()
-            except Exception as e:
-                print(f"Erro ao inserir entrada: {e}")
+            super().accept()
         else:
             QMessageBox.warning(self, "Erro", "A quantidade de entrada deve ser um valor inteiro maior que zero.")
+
 
          
 class MainWindow(QMainWindow):
@@ -330,7 +321,9 @@ class MainWindow(QMainWindow):
         self.category_combo.addItem("Itens de Escritório")
         self.category_combo.addItem("Itens Médicos")
         self.category_combo.addItem("Itens de Limpeza")  
-        self.category_combo.addItem("Medicações")              
+        self.category_combo.addItem("Medicações")
+        self.category_combo.addItem("Itens Importados")
+                      
         self.layout.addWidget(self.category_combo)
 
         self.quantity_label = QLabel("Quantidade:")
@@ -432,17 +425,30 @@ class MainWindow(QMainWindow):
         self.report_button = QPushButton("Gerar Relatório")
         self.report_button.clicked.connect(self.generate_report)
         self.layout.addWidget(self.report_button)
+        
+        self.import_button = QPushButton("Importar")
+        self.import_button.clicked.connect(self.import_from_excel)
+        self.layout.addWidget(self.import_button)
+        self.import_input = QLineEdit()
+        
         self.search_button =    QPushButton("Buscar")
         self.search_button.clicked.connect(self.search_products)
         self.layout.addWidget(self.search_button)
         self.search_input = QLineEdit()
-        self.layout.addWidget(self.search_input)   
+        self.layout.addWidget(self.search_input)  
+        
+        self.total_value_label = QLabel()
+        self.layout.addWidget(self.total_value_label)
+        
+          
         self.category_filter_combo = QComboBox()
         self.category_filter_combo.addItem("Todas as Categorias")
         self.category_filter_combo.addItem("Itens de Escritório")
         self.category_filter_combo.addItem("Itens Médicos")
         self.category_filter_combo.addItem("Itens de Limpeza")
-        self.category_filter_combo.addItem("Medicações")               
+        self.category_filter_combo.addItem("Medicações")
+        self.category_filter_combo.addItem("Itens Importados")
+              
         self.category_filter_combo.currentIndexChanged.connect(self.load_products)
         self.layout.addWidget(self.category_filter_combo)
         self.table = QTableWidget()
@@ -503,14 +509,96 @@ class MainWindow(QMainWindow):
 
     def check_register_year_input(self, text):
         if len(text) == 4:
-            self.add_button.setFocus()                    
+            self.unit_value_input.setFocus()                    
                 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             focused_widget = self.focusWidget()
             if isinstance(focused_widget, QPushButton):
                 focused_widget.click()
-                    
+                               
+    def import_from_excel(self):
+    # Exibir caixa de diálogo com informações sobre o formato do arquivo Excel
+        message = ("O arquivo Excel deve ter os seguintes nomes de colunas na terceira linha( não precisam estar nessa ordem; Não precisa estarem todas preenchidas; Não precisa que o arquivo tenha todas essas colunas, pois os valores faltantes serão preenchidos com uma informção padrão do código):\n"
+               "Nome, Categoria, Quantidade, Quantidade Mínima, Vencimento, Data do Primeiro Registro, Valor Unitário\n"
+               "Deseja continuar com a importação?")
+        reply = QMessageBox.question(self, 'Formato do Arquivo Excel', message,  QMessageBox.Yes, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+        # Continuar com a importação
+            options = QFileDialog.Options()
+            options |= QFileDialog.ReadOnly
+            file_name, _ = QFileDialog.getOpenFileName(self, "QFileDialog.getOpenFileName()", "",
+                                                   "Excel Files (*.xlsx);;All Files (*)", options=options)
+            if file_name:
+                workbook = openpyxl.load_workbook(file_name)
+                sheet = workbook.active
+            else:
+            	return
+
+
+
+    # Obter os nomes das colunas da primeira linha
+            column_names = [(cell.value if cell.value is not None else '') for cell in sheet[3]]
+
+            for row in sheet.iter_rows(min_row=4, values_only=True):  # Ignorar a primeira linha (cabeçalho)
+        # Criar um dicionário que mapeia os nomes das colunas para os seus respectivos valores
+                item_data = {column_name: value for column_name, value in zip(column_names, row)}
+
+        # Obter os valores das colunas, usando valores padrão para as colunas que estão faltando
+                item_name = item_data.get("Nome", "Nome Desconhecido")
+                categoria = item_data.get("Categoria", "Itens Importados")
+
+                quantidade = item_data. get("Quantidade", 0)
+                if quantidade is None or quantidade == '':
+                    quantidade = 0
+                else:
+                	quantidade = float(quantidade)
+
+                quantidade_minima = item_data.get("Quantidade Mínima", 0)
+                if quantidade_minima is None or   quantidade_minima == '':
+                    quantidade_minima = 0
+                else:
+                    quantidade_minima = float(quantidade_minima)
+ 
+                vencimento = item_data.get("Vencimento", datetime.datetime(2100, 1, 1))
+                if isinstance(vencimento, datetime.datetime):
+                    vencimento = vencimento.strftime("%d/%m/%Y")
+                if vencimento is None or vencimento == '':
+                    vencimento = "01/01/2100"
+
+                entrada = item_data.get("Data do Primeiro Registro", datetime.datetime(2000, 1, 1))
+                if isinstance(entrada, datetime.datetime):
+                    entrada = entrada.strftime("%d/%m/%Y")
+                if entrada is None or entrada == '':
+                    entrada = "01/01/2000"
+
+                valor_unitario = item_data.get("Valor Unitário", 0)
+                if valor_unitario is None or valor_unitario == '':
+                    valor_unitario = 0
+                else:
+                    valor_unitario = float(valor_unitario)
+
+                
+            # Calcular o valor total
+                valor_total = quantidade * valor_unitario
+
+                c.execute("INSERT INTO produtos (nome, categoria, quantidade, quantidade_minima, vencimento, data_registro, valor_unitario, valor_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          (item_name, categoria, quantidade, quantidade_minima, vencimento, entrada, valor_unitario, valor_total))
+        conn.commit()
+        self.load_products()
+        self.update_total_value()
+ 
+
+    def update_total_value(self):
+        c.execute("SELECT SUM(valor_total) FROM produtos")
+# No método update_total_value
+        total_value = c.fetchone()[0]
+        if total_value is None:
+            total_value = 0
+        total_value_str = 'R$ {:,.2f}'.format(total_value).replace('.', '#').replace(',', '.').replace('#', ',')
+        self.total_value_label.setText(f"Valor Total do Almoxarifado: {total_value_str}")
+
+                                                                            
     def search_products(self):
         search_text = self.search_input.text()  # Obtém o texto digitado na caixa de busca
         selected_category = self.    category_filter_combo.currentText()
@@ -526,17 +614,15 @@ class MainWindow(QMainWindow):
     def update_table(self, products):
         self.table.setRowCount(0)
 
-        for row_number, row_data in enumerate(products):
+        for row_number, row_data in   enumerate(products):
             self.table.insertRow(row_number)
             for column_number, data in enumerate(row_data):
                 item = QTableWidgetItem(str(data))
                 self.table.setItem(row_number, column_number, item)
-                
-                quantidade = row_data[2]
 
-# Em load_products e update_table, adicione o código para calcular o valor total
+                quantidade = row_data[2]
                 valor_unitario = row_data[7]
-                valor_total = valor_unitario *   quantidade
+                valor_total = valor_unitario * quantidade
                 item = QTableWidgetItem(str(valor_total))
                 self.table.setItem(row_number, 8, item)
 
@@ -549,30 +635,48 @@ class MainWindow(QMainWindow):
                     retirada_date = QDate.fromString(retirada, "dd/MM/yyyy")
                 today = QDate.currentDate()
                 if vencimento_date < today:
-                    item.setBackground(QColor("red"))
-                    item.setForeground(QColor("white"))
+                    for column_number in range(self.table.columnCount()):
+                        item = self.table.item(row_number, column_number)
+                        if item is not None:
+                            item.setBackground(QColor("red"))
+                            item.setForeground(QColor("white"))
                 elif vencimento_date.addMonths(-2) <= today:
-                    item.setBackground(QColor("yellow"))
-                else:
-                    item.setBackground(QColor("green"))
-                    item.setForeground(QColor("white"))
+                    for column_number in range(self.table.columnCount()):
+                        item = self.table.item(row_number, column_number)
+                        if item is not None:
+                            item.setBackground(QColor("yellow"))
+                    else:
+                        for column_number in range(self.table.columnCount()):
+                            item = self.table.item(row_number, column_number)
+                            if item is not None:
+                                item.setBackground(QColor("green"))
+                                item.setForeground(QColor("white"))
 
                 quantidade = row_data[2]
                 quantidade_minima = row_data[3]
                 if quantidade == 0:
-                    item.setBackground(QColor("purple"))
-                    item.setForeground(QColor("white"))
-                elif quantidade <=     quantidade_minima:
+                    for column_number in range(self.table.columnCount()):
+                        item = self.table.item(row_number, column_number)
+                        if item is not None:
+                            item.setBackground(QColor("purple"))
+                            item.setForeground(QColor("white"))
+                elif quantidade <= quantidade_minima:
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
 
                     if self.timer.isActive():
-                        item.setBackground(QColor("blue"))
-                        item.setForeground(QColor("white"))
+                        for column_number in range(self.table.columnCount()):
+                            item = self.table.item(row_number, column_number)
+                            if item is not None:
+                                item.setBackground(QColor("blue"))
+                                item.setForeground(QColor("white"))
                     else:
-                        item.setBackground(QColor("white"))
-                        item.setForeground(QColor("blue"))
+                        for column_number in range(self.table.columnCount()):
+                            item = self.table.item(row_number, column_number)
+                            if item is not None:
+                                item.setBackground(QColor("white"))
+                                item.setForeground(QColor("blue"))
 
             button = QPushButton("Detalhes")
             button.clicked.connect(lambda _, p=row_data[0]: self.open_withdrawal_details(p))
@@ -593,18 +697,17 @@ class MainWindow(QMainWindow):
 
         products = c.fetchall()
 
-        for row_number, row_data in enumerate(products):
+        for row_number, row_data in   enumerate(products):
             self.table.insertRow(row_number)
             for column_number, data in enumerate(row_data):
                 item = QTableWidgetItem(str(data))
                 self.table.setItem(row_number, column_number, item)
 
-                quantidade = row_data[2]                
-# Em load_products e update_table, adicione o código para calcular o valor total
+                quantidade = row_data[2]
                 valor_unitario = row_data[7]
-                valor_total = valor_unitario *   quantidade
+                valor_total = valor_unitario * quantidade
                 item = QTableWidgetItem(str(valor_total))
-                self.table.setItem(row_number, 8, item)                
+                self.table.setItem(row_number, 8, item)
 
                 vencimento = row_data[4]
                 vencimento_date = QDate.fromString(vencimento, "d/M/yyyy")
@@ -615,30 +718,48 @@ class MainWindow(QMainWindow):
                     retirada_date = QDate.fromString(retirada, "dd/MM/yyyy")
                 today = QDate.currentDate()
                 if vencimento_date < today:
-                    item.setBackground(QColor("red"))
-                    item.setForeground(QColor("white"))
+                    for column_number in range(self.table.columnCount()):
+                        item = self.table.item(row_number, column_number)
+                        if item is not None:
+                            item.setBackground(QColor("red"))
+                            item.setForeground(QColor("white"))
                 elif vencimento_date.addMonths(-2) <= today:
-                    item.setBackground(QColor("yellow"))
+                    for column_number in range(self.table.columnCount()):
+                        item = self.table.item(row_number, column_number)
+                        if item is not None:
+                            item.setBackground(QColor("yellow"))
                 else:
-                    item.setBackground(QColor("green"))
-                    item.setForeground(QColor("white"))
+                    for column_number in range(self.table.columnCount()):
+                        item = self.table.item(row_number, column_number)
+                        if item is not None:
+                            item.setBackground(QColor("green"))
+                            item.setForeground(QColor("white"))
 
                 quantidade = row_data[2]
                 quantidade_minima = row_data[3]
                 if quantidade == 0:
-                    item.setBackground(QColor("purple"))
-                    item.setForeground(QColor("white"))
+                    for column_number in range(self.table.columnCount()):
+                        item = self.table.item(row_number, column_number)
+                        if item is not None:
+                            item.setBackground(QColor("purple"))
+                            item.setForeground(QColor("white"))
                 elif quantidade <= quantidade_minima:
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
 
                     if self.timer.isActive():
-                        item.setBackground(QColor("blue"))
-                        item.setForeground(QColor("white"))
+                        for column_number in range(self.table.columnCount()):
+                            item = self.table.item(row_number, column_number)
+                            if item is not None:
+                                item.setBackground(QColor("blue"))
+                                item.setForeground(QColor("white"))
                     else:
-                        item.setBackground(QColor("white"))
-                        item.setForeground(QColor("blue"))
+                        for column_number in range(self.table.columnCount()):
+                            item = self.table.item(row_number, column_number)
+                            if item is not None:
+                                item.setBackground(QColor("white"))
+                                item.setForeground(QColor("blue"))
 
             button = QPushButton("Detalhes")
             button.clicked.connect(lambda _, p=row_data[0]: self.open_withdrawal_details(p))
@@ -649,6 +770,7 @@ class MainWindow(QMainWindow):
             self.table.setCellWidget(row_number, 5, button)
 
         self.table.resizeColumnsToContents()
+        self.update_total_value()
 
     def toggle_blink(self):
         row = -1
@@ -719,11 +841,14 @@ class MainWindow(QMainWindow):
                 conn.commit()
                 QMessageBox.information(self, "Sucesso", "Item adicionado com sucesso!")
                 self.clear_input_fields()
+                self.update_total_value()
                 self.load_products()
             except ValueError:
                 QMessageBox.warning(self, "Erro", "Quantidade inválida. Insira um valor numérico.")
         else:
             QMessageBox.warning(self, "Erro", "Preencha todos os campos obrigatórios.")
+            
+            
 
     def edit_product(self):
         selected_items = self.table.selectedItems()
@@ -762,7 +887,8 @@ class MainWindow(QMainWindow):
             c.execute("DELETE FROM retiradas WHERE produto=?", (nome,))
             conn.commit()
             QMessageBox.information(self, "Sucesso", "Item excluído com sucesso!")
-            self.load_products()
+            self.load_products()            
+            self.update_total_value()
 
     def open_withdrawal_dialog(self):
         selected_items = self.table.selectedItems()
@@ -789,12 +915,13 @@ class MainWindow(QMainWindow):
 
                QMessageBox.information(self, "Sucesso", "Retirada registrada com sucesso!")
                self.load_products()
+               self.update_total_value()
             else:
                QMessageBox.warning(self, "Erro", "A quantidade de retirada é maior do que a quantidade disponível em estoque.")
                
 
     def open_withdrawal_details(self, produto):
-        c.execute("SELECT quantidade, valor_total, data, responsavel FROM retiradas WHERE produto=?", (produto,))
+        c.execute("SELECT quantidade, valor_unitario, valor_total, data, responsavel FROM retiradas WHERE produto=?", (produto,))
         retiradas = c.fetchall()
 
         details_dialog = QDialog(self)
@@ -805,8 +932,8 @@ class MainWindow(QMainWindow):
 
         table = QTableWidget(details_dialog)
         table.setRowCount(len(retiradas))
-        table.setColumnCount(3)
-        table.setHorizontalHeaderLabels(["Quantidade", "Data", "Responsável"])
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(["Quantidade"," Valor Unitario", "Valor Total", "Data", "Responsável"])
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
         for row_number, row_data in enumerate(retiradas):
@@ -842,9 +969,10 @@ class MainWindow(QMainWindow):
 
             QMessageBox.information(self, "Sucesso", "Entrada registrada com sucesso!")
             self.load_products()
+            self.update_total_value()
         
     def open_entry_details(self, produto):
-        c.execute("SELECT quantidade, valor_total, data, responsavel FROM entradas WHERE produto=?", (produto,))
+        c.execute("SELECT quantidade, valor_unitario, valor_total, data, responsavel FROM entradas WHERE produto=?", (produto,))
         entradas = c.fetchall()
 
         details_dialog = QDialog(self)
@@ -855,8 +983,8 @@ class MainWindow(QMainWindow):
 
         table = QTableWidget(details_dialog)
         table.setRowCount(len(entradas))
-        table.setColumnCount(3)
-        table.setHorizontalHeaderLabels(["Quantidade", "Data", "Responsável"])
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(["Quantidade", "Valor Unitario", "Valor Total", "Data", "Responsável"])
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
         for row_number, row_data in enumerate(entradas):
@@ -879,6 +1007,24 @@ class MainWindow(QMainWindow):
             products_sheet = workbook.active
             products_sheet.title = "Itens"
 
+
+# Ajustar a altura da primeira linha
+            products_sheet.row_dimensions[1].height = 80
+# Carregar a imagem
+            img1 = Image('imagem.jpeg')
+            img2 = Image('imagem.jpeg') # Substitua 'nome_da_imagem.png' pelo nome real da sua imagem
+
+# Redimensionar a imagem, se necessário
+            img1.width = 105
+            img1.height = 105
+            img2.width = 112
+            img2.height = 105
+
+# Adicionar a imagem à planilha
+            products_sheet.add_image(img1, 'A1')
+            products_sheet.add_image(img2, 'G1')
+            
+
             # Definir estilo para o cabeçalho
             header_style = openpyxl.styles.NamedStyle(name="header_style")
             header_style.alignment = Alignment(horizontal="center", vertical="center")
@@ -886,6 +1032,22 @@ class MainWindow(QMainWindow):
             products_sheet.merge_cells("A1:G1")
             header_cell = products_sheet.cell(row=1, column=1, value="Almoxarifado Caps Paulo da Portela - Relatório de Itens - Prefeitura do Rio de Janeiro")
             header_cell.style = header_style
+            
+# No método generate_report
+            c.execute("SELECT SUM(valor_total) FROM produtos")
+            total_value = c.fetchone()[0]
+            if total_value is None:
+                total_value = 0
+
+# Adicionar o texto "Valor Total do Almoxarifado:" à célula B2
+            total_value_text_cell = products_sheet.cell(row=2, column=2, value="T. Almoxarifado:")
+            total_value_text_cell.style = header_style
+
+# Adicionar o valor total do almoxarifado à célula C2
+            total_value_cell = products_sheet.cell(row=2, column=3, value=total_value)
+
+# Aplicar formatação de moeda à célula C2
+            total_value_cell.number_format = '"R$"#,##0.00'            
 
             # Preencher nomes das colunas
             product_columns = ["Nome", "Categoria", "Quantidade", "Quantidade Mínima", "Vencimento", "Data do Primeiro Registro", "Valor Unitário", "Valor Total"]
@@ -894,7 +1056,7 @@ class MainWindow(QMainWindow):
                 cell.style = header_style
 
             # Preencher dados dos produtos
-            c.execute("SELECT * FROM produtos")
+            c.execute("SELECT nome, categoria, quantidade, quantidade_minima, vencimento, data_registro, valor_unitario, valor_unitario * quantidade FROM produtos")
             products = c.fetchall()
             for row, product in enumerate(products, start=4):
                 for col, data in enumerate(product, start=1):
@@ -907,6 +1069,22 @@ class MainWindow(QMainWindow):
 
             # Planilha de Retiradas
             withdrawals_sheet = workbook.create_sheet(title="Retiradas")
+            
+            # Ajustar a altura da primeira linha
+            withdrawals_sheet.row_dimensions[1].height = 80
+# Carregar a imagem
+            img1 = Image('imagem.jpeg')
+            img2 = Image('imagem.jpeg') # Substitua 'nome_da_imagem.png' pelo nome real da sua imagem
+
+# Redimensionar a imagem, se necessário
+            img1.width = 95
+            img1.height = 105
+            img2.width = 112
+            img2.height = 105
+
+# Adicionar a imagem à planilha
+            withdrawals_sheet.add_image(img1, 'A1')
+            withdrawals_sheet.add_image(img2, 'G1')
 
             # Preencher cabeçalho
             withdrawals_sheet.merge_cells("A1:G1")
@@ -914,7 +1092,7 @@ class MainWindow(QMainWindow):
             header_cell.style = header_style
 
             # Preencher nomes das colunas
-            withdrawal_columns = ["Produto", "Quantidade", "Valor Total", "Data", "Responsável"]
+            withdrawal_columns = ["Produto", "Quantidade","Valor Unitario", "Valor Total", "Data", "Responsável"]
             for col, column_name in enumerate(withdrawal_columns, start=1):
                 cell = withdrawals_sheet.cell(row=3, column=col, value=column_name)
                 cell.style = header_style
@@ -933,6 +1111,23 @@ class MainWindow(QMainWindow):
 
             # Planilha de Entradas
             entries_sheet = workbook.create_sheet(title="Entradas")
+            
+                        # Ajustar a altura da primeira linha
+            entries_sheet.row_dimensions[1].height = 80
+# Carregar a imagem
+            img1 = Image('imagem.jpeg')
+            img2 = Image('imagem.jpeg') # Substitua 'nome_da_imagem.png' pelo nome real da sua imagem
+
+# Redimensionar a imagem, se necessário
+            img1.width = 95
+            img1.height = 105
+            img2.width = 112
+            img2.height = 105
+
+# Adicionar a imagem à planilha
+            entries_sheet.add_image(img1, 'A1')
+            entries_sheet.add_image(img2, 'G1')
+            
 
             # Preencher cabeçalho
             entries_sheet.merge_cells("A1:G1")
@@ -940,7 +1135,7 @@ class MainWindow(QMainWindow):
             header_cell.style = header_style
 
             # Preencher nomes das colunas
-            entry_columns = ["Produto", "Quantidade", "Valor Total", "Data", "Responsável"]
+            entry_columns = ["Produto", "Quantidade", "Valor Unitario", "Valor Total", "Data", "Responsável"]
             for col, column_name in enumerate(entry_columns, start=1):
                 cell = entries_sheet.cell(row=3, column=col, value=column_name)
                 cell.style = header_style
