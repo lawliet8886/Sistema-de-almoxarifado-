@@ -11,6 +11,7 @@ import unidecode
 import datetime
 import re
 from openpyxl.drawing.image import Image
+import traceback
 
 # Conexão com o banco de dados
 conn = sqlite3.connect('almoxarifado.db')
@@ -518,6 +519,7 @@ class MainWindow(QMainWindow):
                 focused_widget.click()
                                
     def import_from_excel(self):
+      try:
     # Exibir caixa de diálogo com informações sobre o formato do arquivo Excel
         message = ("O arquivo Excel deve ter os seguintes nomes de colunas na terceira linha( não precisam estar nessa ordem; Não precisa estarem todas preenchidas; Não precisa que o arquivo tenha todas essas colunas, pois os valores faltantes serão preenchidos com uma informção padrão do código):\n"
                "Nome, Categoria, Quantidade, Quantidade Mínima, Vencimento, Data do Primeiro Registro, Valor Unitário\n"
@@ -534,9 +536,6 @@ class MainWindow(QMainWindow):
                 sheet = workbook.active
             else:
             	return
-
-
-
     # Obter os nomes das colunas da primeira linha
             column_names = [(cell.value if cell.value is not None else '') for cell in sheet[3]]
 
@@ -587,9 +586,13 @@ class MainWindow(QMainWindow):
         conn.commit()
         self.load_products()
         self.update_total_value()
+      except Exception as e:
+          traceback.print_exc()  # Imprime o traceback completo do erro
+          QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao limpar os campos: {str(e)}")        
  
 
     def update_total_value(self):
+      try:
         c.execute("SELECT SUM(valor_total) FROM produtos")
 # No método update_total_value
         total_value = c.fetchone()[0]
@@ -597,9 +600,12 @@ class MainWindow(QMainWindow):
             total_value = 0
         total_value_str = 'R$ {:,.2f}'.format(total_value).replace('.', '#').replace(',', '.').replace('#', ',')
         self.total_value_label.setText(f"Valor Total do Almoxarifado: {total_value_str}")
-
+      except Exception as e:
+          traceback.print_exc()  # Imprime o traceback completo do erro
+          QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao limpar os campos: {str(e)}")
                                                                             
     def search_products(self):
+      try:
         search_text = self.search_input.text()  # Obtém o texto digitado na caixa de busca
         selected_category = self.    category_filter_combo.currentText()
 
@@ -610,8 +616,14 @@ class MainWindow(QMainWindow):
 
         products = c.fetchall()
         self.update_table(products)
+        self.load_products()
+      except Exception as e:
+          traceback.print_exc()  # Imprime o traceback completo do erro
+          QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao limpar os campos: {str(e)}")        
         
     def update_table(self, products):
+      try:
+      
         self.table.setRowCount(0)
 
         for row_number, row_data in   enumerate(products):
@@ -685,8 +697,12 @@ class MainWindow(QMainWindow):
             button = QPushButton("Detalhes")
             button.clicked.connect(lambda _, p=row_data[0]: self.open_entry_details(p))
             self.table.setCellWidget(row_number, 5, button)
+      except Exception as e:
+          traceback.print_exc()  # Imprime o traceback completo do erro
+          QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao limpar os campos: {str(e)}")            
 
     def load_products(self):
+      try:
         self.table.setRowCount(0)
         selected_category = self.category_filter_combo.currentText()
 
@@ -771,8 +787,11 @@ class MainWindow(QMainWindow):
 
         self.table.resizeColumnsToContents()
         self.update_total_value()
-
+      except Exception as e:
+          traceback.print_exc()  # Imprime o traceback completo do erro
+          QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao limpar os campos: {str(e)}")
     def toggle_blink(self):
+      try:
         row = -1
         for row in range(self.table.rowCount()):
             quantidade = int(self.table.item(row, 2).text())
@@ -803,7 +822,9 @@ class MainWindow(QMainWindow):
 
         if self.table.selectedItems():
             self.table.itemSelectionChanged.emit()
-
+      except Exception as e:
+          traceback.print_exc()  # Imprime o traceback completo do erro
+          QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao limpar os campos: {str(e)}")
     def add_product(self):
         nome = self.name_input.text()
         categoria = self.category_combo.currentText()
@@ -995,8 +1016,22 @@ class MainWindow(QMainWindow):
         details_layout.addWidget(table)
 
         details_dialog.exec_() 
+        
+    def adjust_column_width(sheet):
+        for column in sheet.columns:
+            max_length = 0
+            column = [cell for cell in column]
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(cell.value)
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            sheet.column_dimensions[openpyxl.utils.get_column_letter(column[0].column)].width = adjusted_width        
 
     def generate_report(self):
+        try:
             current_directory = os.getcwd()
             report_directory = os.path.join(current_directory, "Relatório e Verificação")
             os.makedirs(report_directory, exist_ok=True)  # Cria a pasta se não existir      
@@ -1015,10 +1050,10 @@ class MainWindow(QMainWindow):
             img2 = Image('imagem.jpeg') # Substitua 'nome_da_imagem.png' pelo nome real da sua imagem
 
 # Redimensionar a imagem, se necessário
-            img1.width = 105
-            img1.height = 105
-            img2.width = 112
-            img2.height = 105
+            img1.width = 140
+            img1.height = 125
+            img2.width = 140
+            img2.height = 125
 
 # Adicionar a imagem à planilha
             products_sheet.add_image(img1, 'A1')
@@ -1065,7 +1100,7 @@ class MainWindow(QMainWindow):
             # Ajustar largura das colunas
             for column in range(1, len(product_columns) + 1):
                 column_letter = get_column_letter(column)
-                products_sheet.column_dimensions[column_letter].width = 15
+                products_sheet.column_dimensions[column_letter].width = 19
 
             # Planilha de Retiradas
             withdrawals_sheet = workbook.create_sheet(title="Retiradas")
@@ -1077,10 +1112,10 @@ class MainWindow(QMainWindow):
             img2 = Image('imagem.jpeg') # Substitua 'nome_da_imagem.png' pelo nome real da sua imagem
 
 # Redimensionar a imagem, se necessário
-            img1.width = 95
-            img1.height = 105
-            img2.width = 112
-            img2.height = 105
+            img1.width = 140
+            img1.height = 125
+            img2.width = 140
+            img2.height = 125
 
 # Adicionar a imagem à planilha
             withdrawals_sheet.add_image(img1, 'A1')
@@ -1107,7 +1142,7 @@ class MainWindow(QMainWindow):
             # Ajustar largura das colunas
             for column in range(1, len(withdrawal_columns) + 1):
                 column_letter = get_column_letter(column)
-                withdrawals_sheet.column_dimensions[column_letter].width = 15
+                withdrawals_sheet.column_dimensions[column_letter].width = 19
 
             # Planilha de Entradas
             entries_sheet = workbook.create_sheet(title="Entradas")
@@ -1119,10 +1154,10 @@ class MainWindow(QMainWindow):
             img2 = Image('imagem.jpeg') # Substitua 'nome_da_imagem.png' pelo nome real da sua imagem
 
 # Redimensionar a imagem, se necessário
-            img1.width = 95
-            img1.height = 105
-            img2.width = 112
-            img2.height = 105
+            img1.width = 140
+            img1.height = 125
+            img2.width = 140
+            img2.height = 125
 
 # Adicionar a imagem à planilha
             entries_sheet.add_image(img1, 'A1')
@@ -1150,15 +1185,18 @@ class MainWindow(QMainWindow):
             # Ajustar largura das colunas
             for column in range(1, len(entry_columns) + 1):
                 column_letter = get_column_letter(column)
-                entries_sheet.column_dimensions[column_letter].width = 15
+                entries_sheet.column_dimensions[column_letter].width = 19
 
 
             # Salvar o arquivo
             workbook.save(file_path)
             QMessageBox.information(self, "Relatório Gerado", "O relatório foi gerado com sucesso!")
-     
-
+        except Exception as e:
+            traceback.print_exc()  # Imprime o traceback completo do erro
+            QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao gerar o relatório: {str(e)}")
+            
     def clear_input_fields(self):
+      try:
         self.name_input.clear()
         self.quantity_input.clear()
         self.min_quantity_input.clear()
@@ -1169,6 +1207,10 @@ class MainWindow(QMainWindow):
         self.register_month_input.clear()
         self.register_year_input.clear()
         self.unit_value_input.clear()
+      except Exception as e:
+        traceback.print_exc()  # Imprime o traceback completo do erro
+        QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao gerar o relatório: {str(e)}")
+            
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
