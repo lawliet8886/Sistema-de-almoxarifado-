@@ -616,7 +616,7 @@ class MainWindow(QMainWindow):
 
         products = c.fetchall()
         self.update_table(products)
-        self.load_products()
+        
       except Exception as e:
           traceback.print_exc()  # Imprime o traceback completo do erro
           QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao limpar os campos: {str(e)}")        
@@ -657,12 +657,12 @@ class MainWindow(QMainWindow):
                         item = self.table.item(row_number, column_number)
                         if item is not None:
                             item.setBackground(QColor("yellow"))
-                    else:
-                        for column_number in range(self.table.columnCount()):
-                            item = self.table.item(row_number, column_number)
-                            if item is not None:
-                                item.setBackground(QColor("green"))
-                                item.setForeground(QColor("white"))
+                else:
+                    for column_number in range(self.table.columnCount()):
+                        item = self.table.item(row_number, column_number)
+                        if item is not None:
+                            item.setBackground(QColor("green"))
+                            item.setForeground(QColor("white"))
 
                 quantidade = row_data[2]
                 quantidade_minima = row_data[3]
@@ -698,6 +698,7 @@ class MainWindow(QMainWindow):
             button.clicked.connect(lambda _, p=row_data[0]: self.open_entry_details(p))
             self.table.setCellWidget(row_number, 5, button)
       except Exception as e:
+         
           traceback.print_exc()  # Imprime o traceback completo do erro
           QMessageBox.critical(self, "Erro", f"Ocorreu um erro ao limpar os campos: {str(e)}")            
 
